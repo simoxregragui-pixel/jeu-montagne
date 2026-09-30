@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Montée des Pierres</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      touch-action: none;
+    }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #101827;
+      font-family: Arial, sans-serif;
+      color: white;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(#79c9ed, #d9f3ff 58%, #64748b 59%);
+    }
+
+    #interface {
+      position: fixed;
+      top: 15px;
+      left: 15px;
+      right: 15px;
+      display: flex;
+      justify-content: space-between;
+      z-index: 2;
+      font-weight: bold;
+      text-shadow: 0 2px 3px #0008;
+    }
+
+    #message {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      text-align: center;
+      background: #07111dcc;
+      z-index: 5;
+      padding: 25px;
+    }
+
+    #message h1 {
+      font-size: 34px;
+      margin: 0 0 12px;
+    }
+
+    #message p {
+      max-width: 330px;
+      line-height: 1.5;
+    }
+
+    button {
+      border: 0;
+      border-radius: 14px;
+      padding: 15px 24px;
+      color: white;
+      background: #e07a35;
+      font-size: 18px;
+      font-weight: bold;
+      box-shadow: 0 5px 0 #9f4e20;
+    }
+
+    button:active {
+      transform: translateY(4px);
+      box-shadow: 0 1px 0 #9f4e20;
+    }
+
+    #aide {
+      position: fixed;
+      bottom: 18px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 14px;
+      text-shadow: 0 2px 3px #0008;
+      z-index: 2;
+    }
+  </style>
+</head>
+
+<body>
+
+  <canvas id="jeu"></canvas>
+
+  <div id="interface">
+    <span>Altitude : <b id="altitude">0</b> m</span>
+    <span>Record : <b id="record">0</b> m</span>
+  </div>
+
+  <div id="aide">
+    Tape à gauche ou à droite pour sauter
+  </div>
+
+  <div id="message">
+    <h1>Montée des Pierres</h1>
+    <p>
+      Saute de pierre en pierre sans tomber.
+      Les pierres deviennent plus éloignées et plus petites.
+      Une pierre dorée apparaît rarement : seulement 9 % de chance.
+    </p>
+    <button id="commencer">Commencer</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("jeu");
+    const ctx = canvas.getContext("2d");
+
+    const altitudeTexte = document.getElementById("altitude");
+    const recordTexte = document.getElementById("record");
+    const message = document.getElementById("message");
+    const commencer = document.getElementById("commencer");
+
+    let largeur;
+    let hauteur;
+    let joueur;
+    let pierres;
+    let particules;
+    let cameraY;
+    let score;
+    let record = Number(localStorage.getItem("recordMontagne")) || 0;
+    let jeuActif = false;
+    let dernierTemps = 0;
+    let direction = 0;
+    let sautDemande = false;
+
+    recordTexte.textContent = record;
+
+    function adapterEcran() {
+      largeur = canvas.width = window.innerWidth * devicePixelRatio;
+      hauteur = canvas.height = window.innerHeight * devicePixelRatio;
+
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerHeight + "px";
+
+      ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+
+      largeur = window.innerWidth;
+      hauteur = window.innerHeight;
+    }
+
+    window.addEventListener("resize", adapterEcran);
+    adapterEcran();
+
+    function nouvellePartie() {
+      joueur = {
+        x: largeur / 2,
+        y: hauteur - 150,
+        largeur: 24,
+        hauteur: 34,
+        vitesseX: 0,
+        vitesseY: 0,
+        auSol: true
+      };
+
+      pierres = [];
+      particules = [];
+      cameraY = 0;
+      score = 0;
+      direction = 0;
+      sautDemande = false;
+
+      // Pierre de départ
+      pierres.push({
+        x: largeur / 2 - 55,
+        y: hauteur - 80,
+        largeur: 110,
+        hauteur: 25,
+        speciale: false,
+        angle: 0,
+        mouvement: 0
+      });
+
+      // Génération initiale
+      for (let i = 0; i < 16; i++) {
+        ajouterPierre(hauteur - 170 - i * 105);
+      }
+
+      jeuActif = true;
+      message.style.display = "none";
+      dernierTemps = performance.now();
+      requestAnimationFrame(boucle);
+    }
+
+    function ajouterPierre(y) {
+      const derniere = pierres[pierres.length - 1];
+
+      let ecartMax = Math.min(190, 95 + score * 0.5);
+      let ecart = (Math.random() - 0.5) * ecartMax;
+
+      let x = derniere
+        ? derniere.x + derniere.largeur / 2 + ecart
+        : largeur / 2;
+
+      x = Math.max(25, Math.min(largeur - 105, x));
+
+      // Pierre dorée : chance de 9 %
+      const speciale = Math.random() < 0.09;
+
+      pierres.push({
+        x,
+        y,
+        largeur: speciale ? 105 : 78 + Math.random() * 18,
+        hauteur: 24,
+        speciale,
+        angle: Math.random() * Math.PI,
+        mouvement: Math.random() * 10
+      });
+    }
+
+    function sauter() {
+      if (!jeuActif || !joueur.auSol) return;
+
+      joueur.vitesseY = -610;
+      joueur.auSol = false;
+
+      creerParticules(joueur.x, joueur.y + joueur.hauteur, "#ffffff");
+    }
+
+    function creerParticules(x, y, couleur) {
+      for (let i = 0; i < 7; i++) {
+        particules.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 100,
+          vy: -Math.random() * 100,
+          vie: 1,
+          couleur
+        });
+      }
+    }
+
+    function mettreAJour(dt) {
+      if (!jeuActif) return;
+
+      // Mouvement horizontal
+      joueur.vitesseX += direction * 1100 * dt;
+      joueur.vitesseX *= 0.88;
+      joueur.vitesseX = Math.max(-260, Math.min(260, joueur.vitesseX));
+      joueur.x += joueur.vitesseX * dt;
+
+      if (joueur.x < -20) joueur.x = largeur + 20;
+      if (joueur.x > largeur + 20) joueur.x = -20;
+
+      // Gravité
+      joueur.vitesseY += 1400 * dt;
+      joueur.y += joueur.vitesseY * dt;
+      joueur.auSol = false;
+
+      // Animations légères des pierres
+      for (const pierre of pierres) {
+        pierre.mouvement += dt;
+      }
+
+      // Collision avec les pierres
+      for (const pierre of pierres) {
+        const mouvementY = Math.sin(pierre.mouvement * 1.5) * 2;
+        const pierreY = pierre.y + mouvementY;
+
+        const touchePierre =
+          joueur.vitesseY >= 0 &&
+          joueur.x + joueur.largeur / 2 > pierre.x &&
+          joueur.x - joueur.largeur / 2 < pierre.x + pierre.largeur &&
+          joueur.y + joueur.hauteur >= pierreY &&
+          joueur.y + joueur.hauteur <= pierreY + pierre.hauteur + 18;
+
+        if (touchePierre) {
+          joueur.y = pierreY - joueur.hauteur;
+          joueur.vitesseY = 0;
+          joueur.auSol = true;
+
+          if (pierre.speciale) {
+            // Grande montée spéciale
+            joueur.vitesseY = -850;
+            score += 9;
+            creerParticules(joueur.x, joueur.y, "#ffd166");
+          } else {
+            score += 1;
+          }
+
+          altitudeTexte.textContent = score;
+        }
+      }
+
+      // La caméra suit le joueur
+      if (joueur.y < hauteur * 0.42) {
+        const difference = hauteur * 0.42 - joueur.y;
+        joueur.y = hauteur * 0.42;
+        cameraY += difference;
+
+        for (const pierre of pierres) {
+          pierre.y += difference;
+        }
+      }
+
+      // Ajouter de nouvelles pierres en haut
+      let pierreLaPlusHaute = Math.min(...pierres.map(p => p.y));
+
+      while (pierreLaPlusHaute > -200) {
+        ajouterPierre(pierreLaPlusHaute - 100 - Math.random() * 45);
+        pierreLaPlusHaute = Math.min(...pierres.map(p => p.y));
+      }
+
+      // Supprimer les pierres très basses
+      pierres = pierres.filter(p => p.y < hauteur + 180);
+
+      // Particules
+      for (const p of particules) {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 300 * dt;
+        p.vie -= dt * 2;
+      }
+
+      particules = particules.filter(p => p.vie > 0);
+
+      // Chute
+      if (joueur.y > hauteur + 100) {
+        terminerJeu();
+      }
+    }
+
+    function dessinerMontagne() {
+      const decalage = cameraY * 0.15;
+
+      ctx.fillStyle = "#78909c";
+      ctx.beginPath();
+      ctx.moveTo(0, hauteur);
+
+      for (let x = 0; x <= largeur; x += 80) {
+        const y = hauteur * 0.58
+          - Math.sin(x * 0.012 + decalage * 0.002) * 100
+          - Math.sin(x * 0.027) * 45;
+
+        ctx.lineTo(x, y);
+      }
+
+      ctx.lineTo(largeur, hauteur);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#526875";
+      ctx.beginPath();
+      ctx.moveTo(0, hauteur);
+
+      for (let x = 0; x <= largeur; x += 80) {
+        const y = hauteur * 0.72
+          - Math.cos(x * 0.018) * 65;
+
+        ctx.lineTo(x, y);
+      }
+
+      ctx.lineTo(largeur, hauteur);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function dessinerPierre(pierre) {
+      const mouvementY = Math.sin(pierre.mouvement * 1.5) * 2;
+      const y = pierre.y + mouvementY;
+
+      ctx.save();
+
+      ctx.fillStyle = pierre.speciale
+        ? "#e4ad3d"
+        : "#59636b";
+
+      ctx.beginPath();
+      ctx.ellipse(
+        pierre.x + pierre.largeur / 2,
+        y + 12,
+        pierre.largeur / 2,
+        pierre.hauteur / 2,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+
+      ctx.fillStyle = pierre.speciale
+        ? "#ffe08a"
+        : "#85919a";
+
+      ctx.beginPath();
+      ctx.ellipse(
+        pierre.x + pierre.largeur / 2 - 5,
+        y + 7,
+        pierre.largeur / 2 - 10,
+        7,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function dessinerJoueur() {
+      ctx.save();
+
+      // Ombre
+      ctx.fillStyle = "#0004";
+      ctx.beginPath();
+      ctx.ellipse(
+        joueur.x,
+        joueur.y + joueur.hauteur + 5,
+        17,
+        5,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+
+      // Corps
+      ctx.fillStyle = "#e85d4a";
+      ctx.fillRect(
+        joueur.x - 10,
+        joueur.y + 12,
+        20,
+        20
+      );
+
+      // Tête
+      ctx.fillStyle = "#ffd1a9";
+      ctx.beginPath();
+      ctx.arc(joueur.x, joueur.y + 8, 10, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Sac
+      ctx.fillStyle = "#254b59";
+      ctx.fillRect(
+        joueur.x - 15,
+        joueur.y + 14,
+        6,
+        14
+      );
+
+      // Jambes
+      ctx.strokeStyle = "#202b35";
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(joueur.x - 5, joueur.y + 30);
+      ctx.lineTo(joueur.x - 10, joueur.y + 38);
+      ctx.moveTo(joueur.x + 5, joueur.y + 30);
+      ctx.lineTo(joueur.x + 10, joueur.y + 38);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function dessinerParticules() {
+      for (const p of particules) {
+        ctx.globalAlpha = p.vie;
+        ctx.fillStyle = p.couleur;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = 1;
+    }
+
+    function dessiner() {
+      ctx.clearRect(0, 0, largeur, hauteur);
+
+      dessinerMontagne();
+
+      for (const pierre of pierres) {
+        dessinerPierre(pierre);
+      }
+
+      dessinerJoueur();
+      dessinerParticules();
+    }
+
+    function boucle(temps) {
+      if (!jeuActif) return;
+
+      const dt = Math.min((temps - dernierTemps) / 1000, 0.033);
+      dernierTemps = temps;
+
+      mettreAJour(dt);
+      dessiner();
+
+      requestAnimationFrame(boucle);
+    }
+
+    function terminerJeu() {
+      jeuActif = false;
+
+      if (score > record) {
+        record = score;
+        localStorage.setItem("recordMontagne", record);
+        recordTexte.textContent = record;
+      }
+
+      message.style.display = "flex";
+      message.innerHTML = `
+        <h1>Tu es tombé !</h1>
+        <p>Altitude atteinte : ${score} m</p>
+        <button id="rejouer">Rejouer</button>
+      `;
+
+      document.getElementById("rejouer").onclick = nouvellePartie;
+    }
+
+    // Commandes tactiles
+    canvas.addEventListener("touchstart", event => {
+      event.preventDefault();
+
+      const touche = event.touches[0];
+      direction = touche.clientX < largeur / 2 ? -1 : 1;
+
+      sauter();
+    }, { passive: false });
+
+    canvas.addEventListener("touchend", event => {
+      event.preventDefault();
+      direction = 0;
+    }, { passive: false });
+
+    // Commandes clavier pour tester sur ordinateur
+    window.addEventListener("keydown", event => {
+      if (event.key === "ArrowLeft") direction = -1;
+      if (event.key === "ArrowRight") direction = 1;
+      if (event.key === " " || event.key === "ArrowUp") sauter();
+    });
+
+    window.addEventListener("keyup", event => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        direction = 0;
+      }
+    });
+
+    commencer.onclick = nouvellePartie;
+  </script>
+</body>
+</html>
